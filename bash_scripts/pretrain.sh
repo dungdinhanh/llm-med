@@ -4,8 +4,8 @@
 torchrun --nnodes=1 --nproc_per_node=8 --master_port=25001 \
     llava/train/train_mem.py \
     --model_name_or_path meta-llama/Llama-3.2-1B \
-    --data_path /path/to/pubmed_600k.json \
-    --image_folder /path/to/pubmed_600k \
+    --data_path data/instruct/matched_instruct.json \
+    --image_folder data/images \
     --vision_tower google/vit-tiny-patch16-224 \
     --tune_mm_mlp_adapter True \
     --mm_vision_select_layer -1 \
