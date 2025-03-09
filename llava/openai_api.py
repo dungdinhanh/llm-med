@@ -4,8 +4,8 @@ import asyncio
 
 # Fill in your OpenAI setup params here
 openai.api_type = "azure"
-openai.api_key = '1pGUYrbJv80TsaAWUo4ZluGCNsqH6dGVPuphBxJSnODFwdIel0WJJQQJ99BCACL93NaXJ3w3AAABACOGnA9m'
-openai.api_base = 'https://testllavameddungda.openai.azure.com/'
+openai.api_key = '....'
+openai.api_base = 'https://temp-.openai.azure.com/'
 openai.api_version = "2023-03-15-preview"
 
 DEPLOYMENT_ID="gpt-4"
