@@ -1,0 +1,14 @@
+data/alignment
+data/instruct
+data/pmc_articles
+data/images
+
+data/2023-05-10_finetune_postprocess_caption_cleaned
+data/2023-05-10_finetune_postprocess_caption_in_text_cleaned
+data/eval
+data/llava_med_image_urls.jsonl
+data/llava_med_image_urls100.jsonl
+data/matched_instruct.json
+data/matched_urls.jsonl
+data/pretrain_sample.jsonl
+models/

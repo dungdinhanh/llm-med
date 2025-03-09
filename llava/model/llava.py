@@ -22,7 +22,7 @@ from torch.nn import CrossEntropyLoss
 
 from transformers import AutoConfig, AutoModelForCausalLM, \
                          LlamaConfig, LlamaModel, LlamaForCausalLM, \
-                         CLIPVisionModel, CLIPImageProcessor
+                         CLIPVisionModel, CLIPImageProcessor, ViTModel, ViTImageProcessor
 
 from transformers.modeling_outputs import BaseModelOutputWithPast, CausalLMOutputWithPast
 from llava.model.utils import *
@@ -67,11 +67,68 @@ class LlavaLlamaModel(LlamaModel):
             self.vision_tower_name = "microsoft/BiomedCLIP-PubMedBERT_256-vit_base_patch16_224"
             return self.initialize_vision_modules_from_biomed_clip(vision_tower, mm_vision_select_layer,
                                 pretrain_mm_mlp_adapter=None, tune_mm_mlp_adapter=False)
+        elif "google/vit" in vision_tower:
+            return self.initialize_vision_modules_from_google_clip(vision_tower, mm_vision_select_layer,
+                                pretrain_mm_mlp_adapter=None, tune_mm_mlp_adapter=False)
         else:
             return self.initialize_vision_modules_from_openai_clip(vision_tower, mm_vision_select_layer,
                                 pretrain_mm_mlp_adapter=None, tune_mm_mlp_adapter=False)
 
+    def initialize_vision_modules_from_google_vit(self, vision_tower="google/vit-tiny-patch16-224", 
+                                                mm_vision_select_layer=-1, 
+                                                pretrain_mm_mlp_adapter=None, 
+                                                tune_mm_mlp_adapter=False):
+        """
+        Initialize vision modules using Google's ViT-Tiny instead of CLIP.
+        
+        Args:
+            vision_tower (str): Vision model identifier (default: "google/vit-tiny-patch16-224").
+            mm_vision_select_layer (int): Layer to extract features from (e.g., -1 for last layer).
+            pretrain_mm_mlp_adapter (str, optional): Path to pretrained projector weights.
+            tune_mm_mlp_adapter (bool): Whether to tune the projector (False for pretraining-only).
+        """
+        # Set config
+        self.config.mm_vision_tower = vision_tower
 
+        # Load image processor
+        image_processor = ViTImageProcessor.from_pretrained(vision_tower)
+
+        # Load vision tower (ViT-Tiny)
+        if not hasattr(self, 'vision_tower'):
+            vision_tower = ViTModel.from_pretrained(vision_tower)
+        else:
+            vision_tower = self.vision_tower[0]
+        vision_tower.requires_grad_(False)  # Freeze weights
+        vision_tower = vision_tower.to(torch.float16)  # FP16 for efficiency
+        self.vision_tower = [vision_tower]
+
+        # Vision config and patch calculation
+        vision_config = vision_tower.config
+        num_patches = (vision_config.image_size // vision_config.patch_size) ** 2  # e.g., 196 for 224x224, 16x16 patches
+
+        # Set multimodal config
+        self.config.use_mm_proj = True
+        self.config.mm_hidden_size = vision_config.hidden_size  # 192 for ViT-Tiny
+        self.config.mm_vision_select_layer = mm_vision_select_layer
+
+        # Initialize single-layer MLP projector
+        if not hasattr(self, 'mm_projector'):
+            self.mm_projector = nn.Linear(vision_config.hidden_size, self.config.hidden_size)  # e.g., 192 -> 4096
+        self.mm_projector = self.mm_projector.to(torch.float16)
+
+        # Load pretrained projector weights if provided
+        if pretrain_mm_mlp_adapter is not None:
+            mm_projector_weights = torch.load(pretrain_mm_mlp_adapter, map_location='cpu')
+            self.mm_projector.load_state_dict({k.split('.')[-1]: v for k, v in mm_projector_weights.items()})
+
+        # Set projector grad based on tuning flag (False means frozen after pretraining)
+        self.mm_projector.requires_grad_(tune_mm_mlp_adapter)
+
+        return dict(
+            image_processor=image_processor,
+            image_token_len=num_patches,
+            vision_config=vision_config
+        )
 
     def initialize_vision_modules_from_openai_clip(self, vision_tower, mm_vision_select_layer,
                                   pretrain_mm_mlp_adapter=None, tune_mm_mlp_adapter=False):
