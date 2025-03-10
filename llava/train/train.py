@@ -623,6 +623,8 @@ def train():
         trainer.train(resume_from_checkpoint=True)
     else:
         trainer.train()
+    if args.lora:
+        model.model = model.model.merge_and_unload()
     trainer.save_state()
     safe_save_model_for_hf_trainer(trainer=trainer,
                                    output_dir=training_args.output_dir)

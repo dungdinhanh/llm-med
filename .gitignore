@@ -12,3 +12,5 @@ data/matched_instruct.json
 data/matched_urls.jsonl
 data/pretrain_sample.jsonl
 models/
+
+llava.egg-info

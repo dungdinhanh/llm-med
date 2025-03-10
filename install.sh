@@ -19,3 +19,9 @@ pip install einops ninja open-clip-torch
 # echo 'export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$CONDA_PREFIX/lib/' > $CONDA_PREFIX/etc/conda/activate.d/env_vars.sh
 
 pip install flash-attn==2.6.1 --no-build-isolation
+
+pip install transformers==4.49.0
+
+pip install peft
+
+pip install numpy==1.23.1   
