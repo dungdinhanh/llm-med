@@ -23,11 +23,13 @@ from torch.nn import CrossEntropyLoss
 from transformers import AutoConfig, AutoModelForCausalLM, \
                          LlamaConfig, LlamaModel, LlamaForCausalLM, \
                          CLIPVisionModel, CLIPImageProcessor, ViTModel, ViTImageProcessor
+from transformers.models.llama.modeling_llama import LlamaAttention, LlamaMLP, LlamaRMSNorm, LlamaDecoderLayer, LlamaRotaryEmbedding
 
 from transformers.modeling_outputs import BaseModelOutputWithPast, CausalLMOutputWithPast
 from llava.model.utils import *
 import open_clip
 import os, json
+from transformers.tokenization_utils import PreTrainedTokenizer
 
 DEFAULT_IMAGE_TOKEN = "<image>"
 DEFAULT_IMAGE_PATCH_TOKEN = "<im_patch>"
@@ -36,10 +38,187 @@ DEFAULT_IM_END_TOKEN = "<im_end>"
 
 
 class LlavaConfig(LlamaConfig):
-    model_type = "llava"
+    model_type = "llava1"
 
+class LlamaAttentionCustom(nn.Module):
+    def __init__(
+        self,
+        hidden_size: int,
+        num_heads: int,
+        proj_size: int=512,
+    ):
+        super().__init__()
+        self.hidden_size = hidden_size
+        self.num_heads = num_heads
+        self.head_dim = hidden_size // num_heads
 
-class LlavaLlamaModel(LlamaModel):
+        if (self.head_dim * num_heads) != self.hidden_size:
+            raise ValueError(
+                f"hidden_size must be divisible by num_heads (got `hidden_size`: {self.hidden_size}"
+                f" and `num_heads`: {num_heads})."
+            )
+        self.q_proj = nn.Linear(
+            self.hidden_size,
+            num_heads * self.head_dim,
+            bias=False,
+        )
+        self.k_proj = nn.Linear(
+            num_heads * self.head_dim,
+            proj_size,
+            bias=False,
+        )
+        self.v_proj = nn.Linear(
+            num_heads * self.head_dim,
+            proj_size,
+            bias=False,
+        )
+        self.o_proj = nn.Linear(
+            num_heads * self.head_dim,
+            hidden_size,
+            bias=False,
+        )
+        # self.rotary_emb = LlamaRotaryEmbedding(self.head_dim)
+
+    def _shape(self, tensor: torch.Tensor, seq_len: int, bsz: int):
+        return tensor.view(bsz, seq_len, self.num_heads, self.head_dim).transpose(1, 2).contiguous()
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        past_key_value: Optional[Tuple[torch.Tensor]] = None,
+        attention_mask: Optional[torch.Tensor] = None,
+        output_attentions: bool = False,
+        use_cache: bool = False,
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
+        """Input shape: Batch x Time x Channel"""
+
+        bsz, q_len, _ = hidden_states.size()
+
+        query_states = self.q_proj(hidden_states).view(bsz, q_len, self.num_heads, self.head_dim).transpose(1, 2)
+        key_states = self.k_proj(hidden_states).view(bsz, q_len, self.num_heads, self.head_dim).transpose(1, 2)
+        value_states = self.v_proj(hidden_states).view(bsz, q_len, self.num_heads, self.head_dim).transpose(1, 2)
+
+        kv_seq_len = key_states.shape[-2]
+        offset = 0
+        if past_key_value is not None:
+            offset = past_key_value[0].shape[-2]
+            kv_seq_len += offset
+        # cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
+        # query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin, offset=offset)
+        # [bsz, nh, t, hd]
+
+        if past_key_value is not None:
+            # reuse k, v, self_attention
+            key_states = torch.cat([past_key_value[0], key_states], dim=2)
+            value_states = torch.cat([past_key_value[1], value_states], dim=2)
+
+        past_key_value = (key_states, value_states) if use_cache else None
+
+        attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) / math.sqrt(self.head_dim)
+
+        if attn_weights.size() != (bsz, self.num_heads, q_len, kv_seq_len):
+            raise ValueError(
+                f"Attention weights should be of size {(bsz * self.num_heads, q_len, kv_seq_len)}, but is"
+                f" {attn_weights.size()}"
+            )
+
+        if attention_mask is not None:
+            if attention_mask.size() != (bsz, 1, q_len, kv_seq_len):
+                raise ValueError(
+                    f"Attention mask should be of size {(bsz, 1, q_len, kv_seq_len)}, but is {attention_mask.size()}"
+                )
+            attn_weights = attn_weights + attention_mask
+            attn_weights = torch.max(attn_weights, torch.tensor(torch.finfo(attn_weights.dtype).min))
+
+        # upcast attention to fp32
+        attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
+        attn_output = torch.matmul(attn_weights, value_states)
+
+        if attn_output.size() != (bsz, self.num_heads, q_len, self.head_dim):
+            raise ValueError(
+                f"`attn_output` should be of size {(bsz, self.num_heads, q_len, self.head_dim)}, but is"
+                f" {attn_output.size()}"
+            )
+
+        attn_output = attn_output.transpose(1, 2)
+        attn_output = attn_output.reshape(bsz, q_len, self.hidden_size)
+
+        attn_output = self.o_proj(attn_output)
+
+        if not output_attentions:
+            attn_weights = None
+
+        return attn_output, attn_weights, past_key_value
+
+from transformers.cache_utils import Cache
+from transformers.modeling_flash_attention_utils import FlashAttentionKwargs
+from transformers.processing_utils import Unpack
+
+class LlamaDecoderLayerCustom(LlamaDecoderLayer):
+    def __init__(self, config: LlamaConfig, idx: int):
+        super().__init__(config, idx)
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        past_key_value: Optional[Cache] = None,
+        output_attentions: Optional[bool] = False,
+        use_cache: Optional[bool] = False,
+        cache_position: Optional[torch.LongTensor] = None,
+        position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,  # necessary, but kept here for BC
+        **kwargs: Unpack[FlashAttentionKwargs],
+    ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
+        residual = hidden_states
+
+        hidden_states = self.input_layernorm(hidden_states)
+
+        # Self Attention
+        hidden_states, self_attn_weights = self.self_attn(
+            hidden_states=hidden_states,
+            attention_mask=attention_mask,
+            position_ids=position_ids,
+            past_key_value=past_key_value,
+            output_attentions=output_attentions,
+            use_cache=use_cache,
+            cache_position=cache_position,
+            position_embeddings=position_embeddings,
+            **kwargs,
+        )
+        hidden_states = residual + hidden_states
+
+        # Fully Connected
+        residual = hidden_states
+        hidden_states = self.post_attention_layernorm(hidden_states)
+        hidden_states = self.mlp(hidden_states)
+        hidden_states = residual + hidden_states
+
+        outputs = (hidden_states,)
+        if output_attentions:
+            outputs += (self_attn_weights,)
+
+        return outputs
+    
+
+class LlamaModelCustom(LlamaModel):
+    def __init__(self, config: LlamaConfig):
+        super().__init__(config)
+        self.padding_idx = config.pad_token_id
+        self.vocab_size = config.vocab_size
+
+        self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size, self.padding_idx)
+        self.layers = nn.ModuleList(
+            [LlamaDecoderLayerCustom(config, layer_idx) for layer_idx in range(config.num_hidden_layers)]
+        )
+        self.norm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.rotary_emb = LlamaRotaryEmbedding(config=config)
+        self.gradient_checkpointing = False
+
+        # Initialize weights and apply final processing
+        self.post_init()
+
+class LlavaLlamaModel(LlamaModelCustom):
     config_class = LlavaConfig
 
     def __init__(self, config: LlamaConfig, mm_vision_tower=None, mm_hidden_size=None):
@@ -48,11 +227,13 @@ class LlavaLlamaModel(LlamaModel):
         self.vision_tower_name = "openai/clip-vit-large-patch14" # microsoft/BiomedCLIP-PubMedBERT_256-vit_base_patch16_224 # openai/clip-vit-large-patch14
         if hasattr(config, "mm_vision_tower"):
             # HACK: for FSDP
-            
+            # print("get in here?__________________________________________________________________-")
             if "BiomedCLIP" in config.mm_vision_tower or "biomed_clip" in config.mm_vision_tower:
                 model, _, _ = open_clip.create_model_and_transforms('hf-hub:microsoft/BiomedCLIP-PubMedBERT_256-vit_base_patch16_224')
                 self.vision_tower = [model.visual.trunk] # Please refer: https://github.com/mlfoundations/open_clip/blob/main/src/open_clip/timm_model.py#LL60C18-L60C18
                 self.vision_tower_name = "microsoft/BiomedCLIP-PubMedBERT_256-vit_base_patch16_224"
+            elif "WinKawaks" in config.mm_vision_tower:
+                self.vision_tower = [ViTModel.from_pretrained(config.mm_vision_tower)]
             else:
                 self.vision_tower = [CLIPVisionModel.from_pretrained(config.mm_vision_tower)]
 
@@ -62,19 +243,19 @@ class LlavaLlamaModel(LlamaModel):
 
     def initialize_vision_modules(self, vision_tower, mm_vision_select_layer,
                                   pretrain_mm_mlp_adapter=None, tune_mm_mlp_adapter=False):
-
         if "BiomedCLIP" in vision_tower:
             self.vision_tower_name = "microsoft/BiomedCLIP-PubMedBERT_256-vit_base_patch16_224"
             return self.initialize_vision_modules_from_biomed_clip(vision_tower, mm_vision_select_layer,
                                 pretrain_mm_mlp_adapter=None, tune_mm_mlp_adapter=False)
-        elif "google/vit" in vision_tower:
-            return self.initialize_vision_modules_from_google_clip(vision_tower, mm_vision_select_layer,
+        elif "WinKawaks" in vision_tower:
+            
+            return self.initialize_vision_modules_from_google_vit(vision_tower, mm_vision_select_layer,
                                 pretrain_mm_mlp_adapter=None, tune_mm_mlp_adapter=False)
         else:
             return self.initialize_vision_modules_from_openai_clip(vision_tower, mm_vision_select_layer,
                                 pretrain_mm_mlp_adapter=None, tune_mm_mlp_adapter=False)
 
-    def initialize_vision_modules_from_google_vit(self, vision_tower="google/vit-tiny-patch16-224", 
+    def initialize_vision_modules_from_google_vit(self, vision_tower="WinKawaks/vit-tiny-patch16-224", 
                                                 mm_vision_select_layer=-1, 
                                                 pretrain_mm_mlp_adapter=None, 
                                                 tune_mm_mlp_adapter=False):
@@ -227,7 +408,8 @@ class LlavaLlamaModel(LlamaModel):
             image_forward_outs = vision_tower(images, output_hidden_states=True)
             select_hidden_state = image_forward_outs.hidden_states[select_hidden_state_layer]
             image_features = select_hidden_state[:, 1:]
-            dummy_image_features = torch.zeros(256, 1024, device=image_features.device, dtype=image_features.dtype)
+            # dummy_image_features = torch.zeros(256, 1024, device=image_features.device, dtype=image_features.dtype)
+            dummy_image_features = torch.zeros_like(image_features, device=image_features.device)
         
         return image_features, dummy_image_features
 
@@ -273,9 +455,14 @@ class LlavaLlamaModel(LlamaModel):
             else:
                 image_features = self.mm_projector(image_features)
             
-            
+            # print(images)
+            # print(dummy_image_features)
             dummy_image_features = self.mm_projector(dummy_image_features)
-
+            # print("___________________________________________________-")
+            # # print(dummy_image_features)
+            # print(self.mm_projector.weight)
+            # print(self.mm_projector.bias) 
+            # exit(0)
             new_input_embeds = []
             cur_image_idx = 0
             for cur_input_ids, cur_input_embeds in zip(input_ids, inputs_embeds):
@@ -381,12 +568,13 @@ class LlavaLlamaForCausalLM(LlamaForCausalLM):
             shift_logits = logits[..., :-1, :].contiguous()
             shift_labels = labels[..., 1:].contiguous()
             # Flatten the tokens
-            loss_fct = CrossEntropyLoss()
+            loss_fct = CrossEntropyLoss()            
             shift_logits = shift_logits.view(-1, self.config.vocab_size)
             shift_labels = shift_labels.view(-1)
             # Enable model/pipeline parallelism
             shift_labels = shift_labels.to(shift_logits.device)
             loss = loss_fct(shift_logits, shift_labels)
+            
 
         if not return_dict:
             output = (logits,) + outputs[1:]
@@ -466,5 +654,5 @@ class LlavaLlamaForCausalLM(LlamaForCausalLM):
 
         vision_config.im_patch_token = tokenizer.convert_tokens_to_ids([DEFAULT_IMAGE_PATCH_TOKEN])[0]
 
-AutoConfig.register("llava", LlavaConfig)
+AutoConfig.register("llava1", LlavaConfig)
 AutoModelForCausalLM.register(LlavaConfig, LlavaLlamaForCausalLM)

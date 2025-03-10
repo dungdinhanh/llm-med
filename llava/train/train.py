@@ -28,8 +28,12 @@ import transformers
 from torch.utils.data import Dataset
 from llava.train.llava_trainer import LLaVATrainer
 
+# from transformers import 
+
 from llava import conversation as conversation_lib
 from llava import LlavaLlamaForCausalLM
+
+from peft import LoraConfig, get_peft_model
 
 from PIL import Image
 import torch.nn as nn
@@ -58,6 +62,11 @@ class ModelArguments:
     mm_vision_select_layer: Optional[int] = field(default=-1)   # default to the last layer
     pretrain_mm_mlp_adapter: Optional[str] = field(default=None)
     mm_use_im_start_end: bool = field(default=False)
+    tokenizer_1B: bool = field(default=False)
+    lora: bool = field(default=False)
+    lora_r: int = field(default=16)
+    lora_alpha: int = field(default=32)
+    lora_dropout: float = field(default=0.05)
 
 
 @dataclass
@@ -487,6 +496,10 @@ def train():
     model_args, data_args, training_args = parser.parse_args_into_dataclasses()
 
     if model_args.vision_tower is not None:
+        # model = transformers.LlamaForCausalLM.from_pretrained(
+        #     model_args.model_name_or_path,
+        #     cache_dir=training_args.cache_dir,
+        # )
         model = LlavaLlamaForCausalLM.from_pretrained(
             model_args.model_name_or_path,
             cache_dir=training_args.cache_dir,
@@ -500,14 +513,23 @@ def train():
 
     if model_args.freeze_backbone:
         model.model.requires_grad_(False)
-
-    tokenizer = transformers.AutoTokenizer.from_pretrained(
-        model_args.model_name_or_path,
-        cache_dir=training_args.cache_dir,
-        model_max_length=training_args.model_max_length,
-        padding_side="right",
-        use_fast=False,
-    )
+    
+    if model_args.tokenizer_1B:
+         tokenizer = transformers.AutoTokenizer.from_pretrained(
+            "meta-llama/Llama-3.2-1B",
+            cache_dir=training_args.cache_dir,
+            model_max_length=training_args.model_max_length,
+            padding_side="right",
+            use_fast=False,
+        )   
+    else:
+        tokenizer = transformers.AutoTokenizer.from_pretrained(
+            model_args.model_name_or_path,
+            cache_dir=training_args.cache_dir,
+            model_max_length=training_args.model_max_length,
+            padding_side="right",
+            use_fast=False,
+        )
 
     if model_args.version == "v0":
         if tokenizer.pad_token is None:
@@ -544,11 +566,15 @@ def train():
         data_args.image_processor = model_vision_dict['image_processor']
         data_args.is_multimodal = True
 
+        
+
         model.config.tune_mm_mlp_adapter = training_args.tune_mm_mlp_adapter = model_args.tune_mm_mlp_adapter
         if model_args.tune_mm_mlp_adapter:
             model.requires_grad_(False)
             for p in model.model.mm_projector.parameters():
                 p.requires_grad = True
+
+        
 
         model.config.freeze_mm_mlp_adapter = training_args.freeze_mm_mlp_adapter
         if training_args.freeze_mm_mlp_adapter:
@@ -559,6 +585,13 @@ def train():
         vision_config.use_im_start_end = training_args.use_im_start_end = model_args.mm_use_im_start_end
         model.initialize_vision_tokenizer(mm_use_im_start_end=model_args.mm_use_im_start_end, tokenizer=tokenizer, device=training_args.device,
                                           tune_mm_mlp_adapter=model_args.tune_mm_mlp_adapter, pretrain_mm_mlp_adapter=model_args.pretrain_mm_mlp_adapter)
+        
+        # LORA
+        if not model_args.tune_mm_mlp_adapter:
+            if model_args.lora:
+                lora_config = LoraConfig(r=model_args.lora_r, lora_alpha=model_args.lora_alpha, target_modules=["q_proj", "v_proj"], lora_dropout=model_args.lora_dropout)
+                model.model = get_peft_model(model.model, lora_config)
+            pass
 
         params_no_grad = [n for n, p in model.named_parameters() if not p.requires_grad]
         if len(params_no_grad) > 0:

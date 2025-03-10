@@ -10,12 +10,12 @@ pip install -e .
 
 pip install einops ninja open-clip-torch
 
-conda install cudatoolkit=11.7 -c nvidia -y
+# conda install cudatoolkit=11.7 -c nvidia -y
 
-export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$CONDA_PREFIX/lib/
+# export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$CONDA_PREFIX/lib/
 
-mkdir -p $CONDA_PREFIX/etc/conda/activate.d
+# mkdir -p $CONDA_PREFIX/etc/conda/activate.d
 
-echo 'export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$CONDA_PREFIX/lib/' > $CONDA_PREFIX/etc/conda/activate.d/env_vars.sh
+# echo 'export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$CONDA_PREFIX/lib/' > $CONDA_PREFIX/etc/conda/activate.d/env_vars.sh
 
-pip install flash-attn --no-build-isolation
+pip install flash-attn==2.6.1 --no-build-isolation
