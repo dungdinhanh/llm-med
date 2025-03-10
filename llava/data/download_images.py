@@ -13,7 +13,7 @@ def main(args):
   with open(args.input_path) as f:
     for line in f:
       input_data.append(json.loads(line))
-  input_data = input_data[:args.threshold]
+  # input_data = input_data[:args.threshold]
   # Download all PMC articles
   print('Downloading PMC articles')
   for idx, sample in enumerate(tqdm(input_data)):

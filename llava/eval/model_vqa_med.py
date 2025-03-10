@@ -15,6 +15,8 @@ from PIL import Image
 import random
 import math
 
+from peft import PeftModel
+
 
 def split_list(lst, n):
     """Split a list into n (roughly) equal-sized chunks"""
@@ -129,6 +131,8 @@ def eval_model(args):
         else:
             model = LlavaLlamaForCausalLM.from_pretrained(model_name, torch_dtype=torch.float16, use_cache=True).cuda()
             image_processor = CLIPImageProcessor.from_pretrained(model.config.mm_vision_tower, torch_dtype=torch.float16)
+            if args.lora:
+                model.model = PeftModel.from_pretrained(model.model, model_name)
             vision_tower = model.model.vision_tower[0]
             vision_tower.to(device='cuda', dtype=torch.float16)
             
@@ -331,6 +335,7 @@ if __name__ == "__main__":
     parser.add_argument("--num-chunks", type=int, default=1)
     parser.add_argument("--chunk-idx", type=int, default=0)
     parser.add_argument("--answer-prompter", action="store_true")
+    parser.add_argument("--lora", type=bool, default=False)
     args = parser.parse_args()
 
     eval_model(args)

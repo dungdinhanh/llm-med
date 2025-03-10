@@ -16,6 +16,7 @@ def parse_args():
     parser.add_argument("--answer-prompter", action="store_true")
     parser.add_argument('--num-chunks', type=int, default=1, help='Number of chunks (default: 1).')
     parser.add_argument("--chunk-idx", type=int, default=0)
+    parser.add_argument("--lora", type=bool, default=False)
     args = parser.parse_args()
 
     return parser.parse_args()
@@ -28,7 +29,7 @@ def run_job(chunk_idx, args):
            "--image-folder {image_folder} "
            "--answers-file {experiment_name_with_split}-chunk{chunk_idx}.jsonl "
            "--num-chunks {chunks} "
-           "--chunk-idx {chunk_idx} ").format(
+           "--chunk-idx {chunk_idx}  ").format(
                 chunk_idx=chunk_idx,
                 chunks=args.num_chunks,
                 model_name=args.model_name,

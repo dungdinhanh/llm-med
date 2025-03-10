@@ -16,8 +16,6 @@ import random
 import math
 
 
-
-
 def split_list(lst, n):
     """Split a list into n (roughly) equal-sized chunks"""
     chunk_size = math.ceil(len(lst) / n)  # integer division
