@@ -1,4 +1,0 @@
-bash_scripts
-data
-images
-llava

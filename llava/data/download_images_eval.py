@@ -12,19 +12,10 @@ def main(args):
     with open(args.input_path) as f:
         for line in f:
             input_data.append(json.loads(line))
-    input_data = input_data[:args.threshold]
+    input_data = input_data
 
-    # Load instruct data
-    with open(args.instruct_path) as f:
-        instruct_data = json.load(f)
-    instruct_data = instruct_data[:args.threshold]
-    
-    # Save the cut instruct data into a new file
-    instruct_dir = os.path.dirname(args.instruct_path)
-    instruct_filename = f"matched_instruct_{args.threshold}.json"
-    instruct_output_path = os.path.join(instruct_dir, instruct_filename)
-    with open(instruct_output_path, 'w') as f:
-        json.dump(instruct_data, f, indent=4)
+   
+
     
     # Process each PMC article
     for sample in tqdm(input_data, desc="Processing articles"):
@@ -72,6 +63,5 @@ if __name__ == '__main__':
     parser.add_argument('--instruct_path', type=str, default='data/instruct/matched_instruct')
     parser.add_argument('--pmc_output_path', type=str, default='data/pmc_articles/')
     parser.add_argument('--images_output_path', type=str, default='data/images/')
-    parser.add_argument('--threshold', default=20000, type=int, help="threshold for cutting the download")
     args = parser.parse_args()
     main(args)

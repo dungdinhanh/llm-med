@@ -4,12 +4,113 @@
     // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
     "version": "0.2.0",
     "configurations": [
-        {
+
+                {
             "name": "Python Debugger: Current File",
             "type": "debugpy",
             "request": "launch",
             "program": "${file}",
             "console": "integratedTerminal"
+        },
+
+        {
+            "name": "Debug LLaVA Training",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "torch.distributed.run",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "env": {
+                "HUGGINGFACE_TOKEN": "your_access_token",
+                "CUDA_VISIBLE_DEVICES": "1,2,3", 
+                "NCCL_P2P_DISABLE": "1",
+                "NCCL_IB_DISABLE": "1"
+            },
+            "args": [
+                "--nnodes=1",
+                "--nproc_per_node=1",
+                "--master_port=25001",
+                "llava/train/train_mem.py",
+                "--model_name_or_path", "meta-llama/Llama-3.2-1B",
+                "--data_path", "/hdd/dungda/LM/data/instruct/matched_instruct_50.json",
+                "--image_folder", "/hdd/dungda/LM/data/images",
+                "--vision_tower", "openai/clip-vit-base-patch16",
+                "--tune_mm_mlp_adapter", "True",
+                "--mm_vision_select_layer", "-1",
+                "--mm_use_im_start_end",
+                "--bf16", "True",
+                "--output_dir", "/hdd/dungda/LM/checkpoints/llava-med-1b-pretrain",
+                "--num_train_epochs", "1",
+                "--per_device_train_batch_size", "2",
+                "--per_device_eval_batch_size", "4",
+                "--gradient_accumulation_steps", "1",
+                "--evaluation_strategy", "no",
+                "--save_strategy", "steps",
+                "--save_steps", "2400",
+                "--save_total_limit", "1",
+                "--learning_rate", "2e-3",
+                "--weight_decay", "0.",
+                "--warmup_ratio", "0.03",
+                "--lr_scheduler_type", "cosine",
+                "--logging_steps", "1",
+                "--tf32", "True",
+                "--model_max_length", "2048",
+                "--gradient_checkpointing", "True",
+                "--lazy_preprocess", "True",
+                "--report_to", "none",
+                "--cache_dir", "/hdd/dungda/LM/Llama-3.2-1B/.cache/"
+            ]
+        },
+
+        {
+            "name": "Train LLava Model",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "torch.distributed.run",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "args": [
+                "--nnodes=1",
+                "--nproc_per_node=1",
+                "--master_port=25001",
+                "llava/train/train_mem.py",
+                "--model_name_or_path", "/hdd/dungda/LM//checkpoints/llava-med-1b-pretrain",
+                "--data_path", "/hdd/dungda/LM//data/instruct/matched_instruct_50.json",
+                "--image_folder", "/hdd/dungda/LM//data/images",
+                "--tune_mm_mlp_adapter", "True",
+                "--output_dir", "/hdd/dungda/LM//checkpoints/llava-med-1b-train/",
+                "--vision_tower", "openai/clip-vit-base-patch16",
+                "--mm_vision_select_layer", "-1",
+                "--mm_use_im_start_end", "True",
+                "--bf16", "True",
+                "--num_train_epochs", "1",
+                "--per_device_train_batch_size", "1",
+                "--per_device_eval_batch_size", "1",
+                "--gradient_accumulation_steps", "1",
+                "--evaluation_strategy", "no",
+                "--save_strategy", "steps",
+                "--save_steps", "1000",
+                "--save_total_limit", "3",
+                "--learning_rate", "2e-3",
+                "--weight_decay", "0.",
+                "--warmup_ratio", "0.03",
+                "--lr_scheduler_type", "cosine",
+                "--logging_steps", "1",
+                "--tf32", "True",
+                "--model_max_length", "1024",
+                "--lazy_preprocess", "True",
+                "--gradient_checkpointing", "True",
+                "--dataloader_num_workers", "8",
+                "--report_to", "none",
+                "--tokenizer_1B", "True"
+            ],
+            "env": {
+                "NCCL_P2P_DISABLE": "1",
+                "NCCL_IB_DISABLE": "1",
+                "CUDA_VISIBLE_DEVICES": "0,1,2,3"
+            },
+            
         }
     ]
 }

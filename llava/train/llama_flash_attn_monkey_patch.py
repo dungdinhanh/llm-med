@@ -18,24 +18,30 @@ from flash_attn.bert_padding import unpad_input, pad_input
 def forward(
     self,
     hidden_states: torch.Tensor,
+    position_embeddings: Tuple[torch.Tensor, torch.Tensor],
     past_key_value: Optional[Tuple[torch.Tensor]] = None,
     attention_mask: Optional[torch.Tensor] = None,
+    cache_position: Optional[torch.LongTensor] = None,
+    position_ids: Optional[torch.LongTensor] = None,
     output_attentions: bool = False,
     use_cache: bool = False,
+    
+    
 ) -> Tuple[torch.Tensor, Optional[torch.Tensor],
             Optional[Tuple[torch.Tensor]]]:
     """Input shape: Batch x Time x Channel
     
     attention_mask: [bsz, q_len]
     """
+    input_shape = hidden_states.shape[:-1]
+    hidden_shape = (*input_shape, -1, self.head_dim)
     bsz, q_len, _ = hidden_states.size()
 
-    query_states = self.q_proj(hidden_states).view(
-        bsz, q_len, self.num_heads, self.head_dim).transpose(1, 2)
-    key_states = self.k_proj(hidden_states).view(
-        bsz, q_len, self.num_heads, self.head_dim).transpose(1, 2)
-    value_states = self.v_proj(hidden_states).view(
-        bsz, q_len, self.num_heads, self.head_dim).transpose(1, 2)
+    query_states = self.q_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+    key_states = self.k_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+    value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+
+    
     # [bsz, q_len, nh, hd]
     # [bsz, nh, q_len, hd]
 
@@ -44,12 +50,11 @@ def forward(
     if past_key_value is not None:
         offset = past_key_value[0].shape[-2]
         kv_seq_len += offset
-    cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
+    cos, sin = position_embeddings
     query_states, key_states = apply_rotary_pos_emb(query_states,
                                                     key_states,
                                                     cos,
-                                                    sin,
-                                                    offset=offset)
+                                                    sin)
     # [bsz, nh, t, hd]
     assert not output_attentions, "output_attentions is not supported"
     assert not use_cache, "use_cache is not supported"
@@ -101,5 +106,6 @@ def _prepare_decoder_attention_mask(self, attention_mask, input_shape,
 
 
 def replace_llama_attn_with_flash_attn():
-    transformers.models.llama.modeling_llama.LlamaModel._prepare_decoder_attention_mask = _prepare_decoder_attention_mask
-    transformers.models.llama.modeling_llama.LlamaAttention.forward = forward
+    # transformers.models.llama.modeling_llama.LlamaModel._prepare_decoder_attention_mask = _prepare_decoder_attention_mask
+    # transformers.models.llama.modeling_llama.LlamaAttention.forward = forward
+    pass

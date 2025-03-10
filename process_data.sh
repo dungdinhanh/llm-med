@@ -1,6 +1,7 @@
 #!/bin/bash
 
 
+
 basefolder="/hdd/dungda/LM/"
 current="./"
 cache=$PWD
@@ -57,19 +58,19 @@ cd ..
 
 pip install tqdm
 
-# cd $PWD
+cd $PWD
 cd ${cache}
 
 # match data with generated inline instruction with limit 20k
 
 cmd="python llava/data/match_data.py --input_urls ${basefolder}/data/llava_med_image_urls.jsonl --input_instruct ${basefolder}/data/instruct/llava_med_instruct_60k_inline_mention.json --output_urls ${basefolder}/data/matched_urls.jsonl \
---output_instruct ${basefolder}/data/instruct/matched_instruct.jsonl"
+--output_instruct ${basefolder}/data/instruct/matched_instruct.json"
 echo ${cmd}
 eval ${cmd} 
 
 # Only download matched data
 
-cmd="python llava/data/download_images_processing.py --input_path ${basefolder}/data/matched_urls.jsonl --pmc_output_path ${basefolder}/data/pmc_articles/ --images_output_path ${basefolder}/data/images --threshold ${threshold}"
+cmd="python llava/data/download_images_processing.py --input_path ${basefolder}/data/matched_urls.jsonl --instruct_path ${basefolder}/data/instruct/matched_instruct.json --pmc_output_path ${basefolder}/data/pmc_articles/ --images_output_path ${basefolder}/data/images --threshold ${threshold}"
  echo ${cmd}
  eval ${cmd}
 
